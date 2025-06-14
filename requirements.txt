@@ -1,0 +1,8 @@
+# 必要なライブラリ
+opencv-python>=4.5.0
+torch>=1.7.0
+torchvision>=0.8.0
+ultralytics>=8.0.0  # YOLOv8
+numpy>=1.19.0
+python-dotenv>=0.19.0
+lapx>=0.5.0  # ByteTrack依存
