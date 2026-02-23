@@ -1,0 +1,17 @@
+# Pythonのキャッシュ（自動生成される不要なフォルダ）
+__pycache__/
+*.py[cod]
+
+# AIモデルファイル（サイズが大きくGitHubには不向き）
+*.pt
+*.onnx
+
+# 動画・画像ファイル（テスト用のデータ）
+*.mp4
+*.avi
+*.jpg
+*.png
+
+# OSの設定ファイル
+.DS_Store
+Thumbs.db

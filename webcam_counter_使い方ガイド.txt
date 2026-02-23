@@ -179,3 +179,25 @@ python webcam_counter.py --line-direction vertical --line-position 0.3 --model y
 * 長時間の使用ではコンピュータが熱くなる場合があります
 * 正確なカウントのためには、カメラの位置と角度の調整が重要です
 * 高解像度・高フレームレート設定は処理負荷が高くなるため、コンピュータの性能に応じて調整してください
+
+python webcam_counter.py --fps 30 --width 300 --height 480
+python webcam_counter_roi.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1
+
+python webcam_counter_roi.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo11n.pt
+
+python webcam_counter_roi.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo11m.pt
+
+python webcam_counter_roi.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo12n.pt
+python webcam_counter_roi.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo12s.pt
+python webcam_counter_roi.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo12m.pt --width 640 --height 480
+python webcam_counter_roi.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo12l.pt --width 640 --height 480
+
+
+python webcam_counter_roi_mps.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo12m.pt --width 640 --height 480
+python webcam_counter_roi_mps.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo12l.pt --width 640 --height 480
+
+python webcam_counter_roi_mps.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.75 --roi-y2 1 --model yolo12x.pt --width 640 --height 480
+
+python webcam_counter_roi_orange_mps.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y2 1 --model yolo12x.pt --width 640 --height 480
+
+python webcam_counter_roi_mps_NewByte.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y2 1 --model yolo12x.pt --width 640 --height 480
