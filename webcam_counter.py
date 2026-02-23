@@ -13,153 +13,48 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-# ByteTrackの簡易実装
-class ByteTrack:
-    def __init__(self, max_age=30, min_hits=3, iou_threshold=0.3):
-        # 初期化処理
-        self.max_age = max_age
-        self.min_hits = min_hits
-        self.iou_threshold = iou_threshold
-        self.trackers = []
-        self.frame_count = 0
-        self.id_count = 0
-        self.tracks = defaultdict(lambda: deque(maxlen=30))  # 軌跡を保存
-
-    def _iou(self, bbox1, bbox2):
-        """IoU（Intersection over Union）を計算"""
-        # bbox形式: [x1, y1, x2, y2]
-        x1 = max(bbox1[0], bbox2[0])
-        y1 = max(bbox1[1], bbox2[1])
-        x2 = min(bbox1[2], bbox2[2])
-        y2 = min(bbox1[3], bbox2[3])
-        
-        if x2 < x1 or y2 < y1:
-            return 0.0
-            
-        intersection = (x2 - x1) * (y2 - y1)
-        bbox1_area = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
-        bbox2_area = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
-        
-        return intersection / float(bbox1_area + bbox2_area - intersection)
-
-    def update(self, detections):
-        """検出結果を使用して追跡を更新"""
-        self.frame_count += 1
-        
-        # 現在のトラッカーがない場合は新しいトラッカーを作成
-        if len(self.trackers) == 0:
-            for det in detections:
-                self.trackers.append({
-                    'id': self.id_count,
-                    'bbox': det[:4],  # [x1, y1, x2, y2]
-                    'conf': det[4],
-                    'class': det[5],
-                    'time_since_update': 0,
-                    'hits': 1,
-                    'age': 1
-                })
-                self.tracks[self.id_count].append((int((det[0] + det[2]) / 2), int((det[1] + det[3]) / 2)))
-                self.id_count += 1
-            return [t for t in self.trackers]
-        
-        # 既存のトラッカーと検出結果をマッチング
-        matched, unmatched_dets, unmatched_trackers = [], [], []
-        
-        # 各トラッカーと検出結果のIoUを計算
-        for t, tracker in enumerate(self.trackers):
-            if tracker['time_since_update'] > self.max_age:
-                unmatched_trackers.append(t)
-                continue
-                
-            iou_max = self.iou_threshold
-            m = -1
-            
-            for d, det in enumerate(detections):
-                if d in matched:
-                    continue
-                    
-                iou = self._iou(tracker['bbox'], det[:4])
-                
-                if iou > iou_max:
-                    iou_max = iou
-                    m = d
-            
-            if m != -1:
-                matched.append(m)
-                self.trackers[t]['bbox'] = detections[m][:4]
-                self.trackers[t]['conf'] = detections[m][4]
-                self.trackers[t]['time_since_update'] = 0
-                self.trackers[t]['hits'] += 1
-                self.trackers[t]['age'] += 1
-                # 軌跡を更新
-                center_x = int((detections[m][0] + detections[m][2]) / 2)
-                center_y = int((detections[m][1] + detections[m][3]) / 2)
-                self.tracks[self.trackers[t]['id']].append((center_x, center_y))
-            else:
-                unmatched_trackers.append(t)
-        
-        # 未マッチングの検出結果を新しいトラッカーとして追加
-        for d in range(len(detections)):
-            if d not in matched:
-                unmatched_dets.append(d)
-                
-        for d in unmatched_dets:
-            self.trackers.append({
-                'id': self.id_count,
-                'bbox': detections[d][:4],
-                'conf': detections[d][4],
-                'class': detections[d][5],
-                'time_since_update': 0,
-                'hits': 1,
-                'age': 1
-            })
-            center_x = int((detections[d][0] + detections[d][2]) / 2)
-            center_y = int((detections[d][1] + detections[d][3]) / 2)
-            self.tracks[self.id_count].append((center_x, center_y))
-            self.id_count += 1
-        
-        # 未マッチングのトラッカーを更新
-        for t in unmatched_trackers:
-            self.trackers[t]['time_since_update'] += 1
-        
-        # 一定期間更新されていないトラッカーを削除
-        self.trackers = [t for t in self.trackers if t['time_since_update'] <= self.max_age]
-        
-        # 条件を満たすトラッカーのみ返す
-        return [t for t in self.trackers if t['hits'] >= self.min_hits]
-
-
 class WebcamPersonCounter:
     def __init__(self, source=0, model_path=None, line_position=0.5, line_direction='horizontal', 
-                 conf_threshold=0.25, show_tracks=True, resolution=None, fps=None):
+                 conf_threshold=0.25, show_tracks=True, resolution=None, fps=None,
+                 roi=(0.0, 0.0, 1.0, 1.0)):
         # 初期化パラメータ
-        self.source = source  # カメラソース（0=デフォルトカメラ）
-        self.model_path = model_path  # YOLOモデルのパス（Noneの場合はデフォルトモデルを使用）
-        self.line_position = line_position  # カウントラインの位置（0.0〜1.0）
-        self.line_direction = line_direction  # ライン方向（'horizontal'または'vertical'）
-        self.conf_threshold = conf_threshold  # 信頼度閾値
-        self.show_tracks = show_tracks  # 軌跡を表示するかどうか
-        self.resolution = resolution  # 解像度設定 (width, height)
-        self.fps = fps  # フレームレート設定
+        self.source = source
+        self.model_path = model_path
+        self.line_position = line_position
+        self.line_direction = line_direction
+        self.conf_threshold = conf_threshold
+        self.show_tracks = show_tracks
+        self.resolution = resolution
+        self.fps = fps
+        self.roi_norm = roi
+        self.roi_pixels = None
         
         # カウンタの初期化
-        self.count_up = 0  # 上/右方向のカウント
-        self.count_down = 0  # 下/左方向のカウント
-        self.counted_ids = set()  # すでにカウントしたIDを記録
-        self.crossed_ids = {}  # ラインを横切ったIDと方向を記録
+        self.count_up = 0
+        self.count_down = 0
+        self.counted_ids = set()
+        self.crossed_ids = {}
         
         # GPUが利用可能かチェック
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        elif torch.backends.mps.is_available():
+            self.device = torch.device('mps') # MacのGPU(Metal)を指定
+        else:
+            self.device = torch.device('cpu')
+            
         print(f"Using device: {self.device}")
         
         # YOLOモデルの読み込み
         if self.model_path is None:
-            self.model = YOLO('yolov8n.pt')  # 小さいモデルを使用
+            self.model = YOLO('yolo12x.pt')  # 大きいモデルを使用
         else:
             self.model = YOLO(self.model_path)
-            
-        # トラッカーの初期化
-        self.tracker = ByteTrack()
+
+
+        # 軌跡保存用のdequeだけ残す（公式トラッカーは軌跡を保持しないため）
+        self.tracks = defaultdict(lambda: deque(maxlen=30))
+        
         
         # カメラの初期化
         self.initialize_camera()
@@ -189,6 +84,16 @@ class WebcamPersonCounter:
         print(f"カメラ解像度: {self.width}x{self.height}")
         print(f"フレームレート: {self.actual_fps}")
         
+        # ROIのピクセル座標を計算
+        x1_n, y1_n, x2_n, y2_n = self.roi_norm
+        self.roi_pixels = (
+            int(self.width * x1_n),
+            int(self.height * y1_n),
+            int(self.width * x2_n),
+            int(self.height * y2_n)
+        )
+        print(f"ROI（処理領域）: {self.roi_pixels}")
+        
         # カウントラインの座標を計算
         if self.line_direction == 'horizontal':
             self.line_y = int(self.height * self.line_position)
@@ -201,6 +106,7 @@ class WebcamPersonCounter:
     
     def list_available_cameras(self):
         """利用可能なカメラデバイスをリストアップする"""
+        # クラス（PersonCounter）のメソッド(今は使ってない)
         available_cameras = []
         for i in range(10):  # 0から9までのカメラインデックスをチェック
             cap = cv2.VideoCapture(i)
@@ -213,30 +119,65 @@ class WebcamPersonCounter:
     
     def process_frame(self, frame):
         """フレームを処理して人物を検出・追跡し、カウントを更新"""
-        # YOLOで検出
-        results = self.model(frame, verbose=False)[0]
+
+        # 1. ROIのピクセル座標を取得
+        x1_roi, y1_roi, x2_roi, y2_roi = self.roi_pixels
         
-        # 人物（クラス0）の検出結果のみをフィルタリング
-        detections = []
-        for r in results.boxes.data.cpu().numpy():
-            x1, y1, x2, y2, conf, cls = r
-            if int(cls) == 0 and conf > self.conf_threshold:  # クラス0=person
-                detections.append([x1, y1, x2, y2, conf, cls])
+        # 2. フレームからROI領域を切り抜く
+        roi_frame = frame[y1_roi:y2_roi, x1_roi:x2_roi]
+
+        # 3. 切り抜いた画像 (roi_frame) をYOLOで検出
+        if roi_frame.size == 0:
+            print("警告: ROI領域が空です。ROIの指定を確認してください。")
+            cv2.rectangle(frame, (x1_roi, y1_roi), (x2_roi, y2_roi), (255, 0, 0), 2)
+            cv2.putText(frame, "ROI (Empty)", (x1_roi + 5, y1_roi + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+            return frame
+
+        # 3. 公式トラッカー(ByteTrack)を使い、切り抜いた画像を処理
+        results = self.model.track(roi_frame, persist=True, verbose=False, device=self.device)[0]
+
         
-        # トラッカーを更新
-        tracks = self.tracker.update(detections)
-        
-        # 各トラックについて処理
-        for track in tracks:
-            track_id = track['id']
-            bbox = track['bbox']
+        # 4. 検出結果の座標を、元のフレーム座標に変換
+        detections = [] # [ (bbox), track_id ] のリスト
             
-            # バウンディングボックスの中心点を計算
+        # 検出と追跡が両方成功したかチェック
+        if results.boxes.id is not None:
+            
+            # 必要なデータを個別にNumpy配列として取得
+            boxes_xyxy = results.boxes.xyxy.cpu().numpy() # 座標 [x1, y1, x2, y2]
+            track_ids = results.boxes.id.int().cpu().tolist() # トラックID
+            confs = results.boxes.conf.cpu().numpy() # 信頼度
+            clss = results.boxes.cls.cpu().numpy() # クラスID
+
+            # 検出された数だけループ
+            for i in range(len(track_ids)):
+                bbox = boxes_xyxy[i]
+                track_id = track_ids[i]
+                conf = confs[i]
+                cls = clss[i]
+                
+                # 座標を分解
+                x1, y1, x2, y2 = bbox
+                
+                # オフセット (roi_pixelsの左上座標) を加算して、元の frame 基準の座標に戻す
+                x1_orig = x1 + x1_roi
+                y1_orig = y1 + y1_roi
+                x2_orig = x2 + x1_roi
+                y2_orig = y2 + y1_roi
+
+                if int(cls) == 0 and conf > self.conf_threshold:  # クラス0=person
+                    # (このスクリプトにはオレンジ色のフィルターはありません)
+                    detections.append(([x1_orig, y1_orig, x2_orig, y2_orig], track_id))
+
+        # 各トラックについて処理
+        for (bbox, track_id) in detections:
+            
             center_x = int((bbox[0] + bbox[2]) / 2)
             center_y = int((bbox[1] + bbox[3]) / 2)
             
-            # 軌跡を取得
-            track_history = self.tracker.tracks[track_id]
+            # 軌跡を更新 (self.tracks を使う)
+            self.tracks[track_id].append((center_x, center_y))
+            track_history = self.tracks[track_id]
             
             # ラインの交差をチェック
             if len(track_history) >= 2:
@@ -244,30 +185,22 @@ class WebcamPersonCounter:
                 curr_center = track_history[-1]
                 
                 if self.line_direction == 'horizontal':
-                    # 水平ラインの場合
                     if (prev_center[1] < self.line_y and curr_center[1] >= self.line_y) or \
                        (prev_center[1] >= self.line_y and curr_center[1] < self.line_y):
-                        # まだカウントされていないIDの場合
                         if track_id not in self.crossed_ids:
-                            # 上から下へ
                             if prev_center[1] < self.line_y and curr_center[1] >= self.line_y:
                                 self.count_down += 1
                                 self.crossed_ids[track_id] = 'down'
-                            # 下から上へ
                             else:
                                 self.count_up += 1
                                 self.crossed_ids[track_id] = 'up'
                 else:  # vertical
-                    # 垂直ラインの場合
                     if (prev_center[0] < self.line_x and curr_center[0] >= self.line_x) or \
                        (prev_center[0] >= self.line_x and curr_center[0] < self.line_x):
-                        # まだカウントされていないIDの場合
                         if track_id not in self.crossed_ids:
-                            # 左から右へ
                             if prev_center[0] < self.line_x and curr_center[0] >= self.line_x:
                                 self.count_up += 1
                                 self.crossed_ids[track_id] = 'right'
-                            # 右から左へ
                             else:
                                 self.count_down += 1
                                 self.crossed_ids[track_id] = 'left'
@@ -306,6 +239,10 @@ class WebcamPersonCounter:
         # カメラ情報を表示
         cv2.putText(frame, f"Camera: {self.source} ({self.width}x{self.height} @ {self.actual_fps:.1f}fps)", 
                     (10, self.height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # ROIの範囲を視覚化
+        cv2.rectangle(frame, (x1_roi, y1_roi), (x2_roi, y2_roi), (255, 0, 0), 2) # 青色の枠
+        cv2.putText(frame, "ROI", (x1_roi + 5, y1_roi + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
         
         return frame
     
@@ -378,7 +315,7 @@ def main():
     # コマンドライン引数の解析
     parser = argparse.ArgumentParser(description='Webカメラ人数カウントシステム')
     parser.add_argument('--source', type=int, default=0, help='カメラソース（デフォルト: 0）')
-    parser.add_argument('--model', type=str, default=None, help='YOLOモデルのパス（デフォルト: yolov8n.pt）')
+    parser.add_argument('--model', type=str, default=None, help='YOLOモデルのパス（デフォルト: yolo12x.pt）')
     parser.add_argument('--line-position', type=float, default=0.5, help='カウントラインの位置（0.0〜1.0、デフォルト: 0.5）')
     parser.add_argument('--line-direction', type=str, default='horizontal', choices=['horizontal', 'vertical'], 
                         help='ラインの方向（horizontal/vertical、デフォルト: horizontal）')
@@ -389,6 +326,11 @@ def main():
     parser.add_argument('--fps', type=int, default=None, help='カメラのフレームレート')
     parser.add_argument('--list-cameras', action='store_true', help='利用可能なカメラをリストアップして終了')
     
+    parser.add_argument('--roi-x1', type=float, default=0.0, help='ROIの左上X座標（割合 0.0-1.0、デフォルト: 0.0）')
+    parser.add_argument('--roi-y1', type=float, default=0.0, help='ROIの左上Y座標（割合 0.0-1.0、デフォルト: 0.0）')
+    parser.add_argument('--roi-x2', type=float, default=1.0, help='ROIの右下X座標（割合 0.0-1.0、デフォルト: 1.0）')
+    parser.add_argument('--roi-y2', type=float, default=1.0, help='ROIの右下Y座標（割合 0.0-1.0、デフォルト: 1.0）')
+
     args = parser.parse_args()
     
     # カメラのリストアップ
@@ -401,6 +343,9 @@ def main():
     if args.width is not None and args.height is not None:
         resolution = (args.width, args.height)
     
+    # ROIの座標をタプルにまとめる
+    roi = (args.roi_x1, args.roi_y1, args.roi_x2, args.roi_y2)
+
     # カウンターの初期化と実行
     counter = WebcamPersonCounter(
         source=args.source,
@@ -410,7 +355,8 @@ def main():
         conf_threshold=args.conf_threshold,
         show_tracks=args.show_tracks,
         resolution=resolution,
-        fps=args.fps
+        fps=args.fps,
+        roi=roi  # <-- ROI引数を渡す
     )
     
     print("\nキーボードショートカット:")
