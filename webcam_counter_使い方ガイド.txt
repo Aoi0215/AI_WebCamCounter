@@ -201,3 +201,5 @@ python webcam_counter_roi_mps.py --fps 30 --roi-x1 0.25 --roi-y1 0.0 --roi-x2 0.
 python webcam_counter_roi_orange_mps.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y2 1 --model yolo12x.pt --width 640 --height 480
 
 python webcam_counter_roi_mps_NewByte.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y2 1 --model yolo12x.pt --width 640 --height 480
+
+python webcam_counter.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y2 1 --model yolo12x.pt --width 640 --height 480 --source 1
