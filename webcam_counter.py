@@ -166,7 +166,7 @@ class WebcamPersonCounter:
                 cap.release()
         return available_cameras
     
-    def is_wearing_orange(self, person_image, threshold=0.05):
+    def is_wearing_orange(self, person_image, threshold=0.2):
         """指定された画像にオレンジ色が一定割合以上含まれているか判定する"""
         if person_image.size == 0:
             return False
