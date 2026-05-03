@@ -15,3 +15,6 @@ __pycache__/
 # OSの設定ファイル
 .DS_Store
 Thumbs.db
+
+# CoreML Models
+*.mlpackage

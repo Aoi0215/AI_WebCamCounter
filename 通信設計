@@ -83,3 +83,6 @@ cv2.destroyAllWindows()
 
 まずは手元のスマホを1台使い、PCと同じ部屋の中で「スマホ → VDO.Ninja → OBS → Python」という一連の流れが動くかどうか、テスト配信を試してみませんか？
 
+
+「--source 1」で繋がる
+python webcam_counter.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y2 1 --model yolo12x.pt --width 640 --height 480 --source 1
