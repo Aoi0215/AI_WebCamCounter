@@ -95,9 +95,9 @@ class WebcamPersonCounter:
         
         # YOLOモデルの読み込み
         if self.model_path is None:
-            self.model = YOLO('yolo12x.pt')  # 大きいモデルを使用
+            self.model = YOLO('yolov8n.pt', task='detect')
         else:
-            self.model = YOLO(self.model_path)
+            self.model = YOLO(self.model_path, task='detect')
             
         print("AIモデルのウォームアップを開始します...")
         dummy_img = np.zeros((640, 640, 3), dtype=np.uint8)
@@ -166,6 +166,35 @@ class WebcamPersonCounter:
                 cap.release()
         return available_cameras
     
+    def is_wearing_orange(self, person_image, threshold=0.05):
+        """指定された画像にオレンジ色が一定割合以上含まれているか判定する"""
+        if person_image.size == 0:
+            return False
+    
+        # BGRからHSV色空間に変換
+        hsv_image = cv2.cvtColor(person_image, cv2.COLOR_BGR2HSV)
+
+        # オレンジ色のHSV範囲を定義
+        lower_orange = np.array([5, 100, 100])
+        upper_orange = np.array([20, 255, 255])
+        
+        # マスクを作成
+        mask = cv2.inRange(hsv_image, lower_orange, upper_orange)
+        
+        # オレンジ色のピクセル数を計算
+        orange_pixels = cv2.countNonZero(mask)
+        
+        # 全ピクセル数を計算
+        total_pixels = person_image.shape[0] * person_image.shape[1]
+        if total_pixels == 0:
+            return False
+            
+        # オレンジ色の割合を計算
+        orange_ratio = orange_pixels / total_pixels
+        
+        # 割合が閾値を超えていればTrueを返す
+        return orange_ratio > threshold
+    
     def process_frame(self, frame):
         """フレームを処理して人物を検出・追跡し、カウントを更新"""
 
@@ -214,14 +243,27 @@ class WebcamPersonCounter:
                 bbox = boxes_xyxy[i]
                 track_id = track_ids[i]
                 
-                # ゴミ掃除名簿に「この人は今いるよ」と記録
-                current_active_ids.add(track_id)
-                
                 # 座標を元のフレーム基準に戻す（描画時の高速化のため先に int にしておく）
                 x1_orig = int(bbox[0] + x1_roi)
                 y1_orig = int(bbox[1] + y1_roi)
                 x2_orig = int(bbox[2] + x1_roi)
                 y2_orig = int(bbox[3] + y1_roi)
+
+                # 切り抜き時のエラーを防ぐため、画面の範囲内に座標を収める（クリッピング）
+                x1_c = max(0, x1_orig)
+                y1_c = max(0, y1_orig)
+                x2_c = min(self.width, x2_orig)
+                y2_c = min(self.height, y2_orig)
+
+                # 元のフレームから人物領域だけを切り抜き
+                person_crop = frame[y1_c:y2_c, x1_c:x2_c]
+
+                # オレンジ色の服を着ていたら「弾く」（以降のカウントや描画処理をスキップ）
+                if self.is_wearing_orange(person_crop):
+                    continue
+
+                # ゴミ掃除名簿に「この人は今いるよ」と記録
+                current_active_ids.add(track_id)
 
                 # 中心点の計算
                 center_x = int((x1_orig + x2_orig) / 2)
