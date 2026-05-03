@@ -98,14 +98,13 @@ class WebcamPersonCounter:
             self.model = YOLO('yolo12x.pt')  # 大きいモデルを使用
         else:
             self.model = YOLO(self.model_path)
-
+            
         print("AIモデルの準備体操（ウォームアップ）を開始します...")
         # 真っ黒なダミー画像（高さ480, 幅640, 3色）を作成
         dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
         # ダミー画像を1回だけ推論させる（結果は捨てる）
         self.model.track(dummy_img, persist=False, verbose=False, device=self.device)
         print("ウォームアップ完了！")
-
 
         # 軌跡保存用のdequeだけ残す
         self.tracks = defaultdict(lambda: deque(maxlen=30))

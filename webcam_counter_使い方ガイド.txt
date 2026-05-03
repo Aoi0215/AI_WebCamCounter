@@ -206,3 +206,18 @@ python webcam_counter.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y
 
 python webcam_counter.py --fps 30 --model yolo12n.mlpackage --width 640 --height 480
 python webcam_counter.py --fps 30 --model yolo12x.mlpackage --width 640 --height 480
+
+python webcam_counter.py --fps 30 --model yolo26x.pt --width 640 --height 480
+python webcam_counter.py --fps 30 --model yolo12x.pt --width 640 --height 480
+
+python webcam_counter.py --fps 30 --model yolo26x.mlpackage --width 640 --height 480
+
+python webcam_counter.py --fps 30 --model yolo26n.mlpackage --width 640 --height 480
+
+python webcam_counter.py --fps 30 --roi-x1 0.2 --roi-y1 0.0 --roi-x2 0.6 --roi-y2 1 --model yolo26x.mlpackage --width 640 --height 480
+
+python webcam_counter.py --fps 30 --model yolo26l.pt --width 640 --height 480
+
+python webcam_counter.py --fps 30 --model yolo26x.mlpackage --width 640 --height 480 --roi-x1 0.3 --roi-x2 0.7
+
+python webcam_counter.py --fps 30 --model yolo26x.mlpackage --width 640 --height 480
