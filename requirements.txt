@@ -1,9 +1,4 @@
-# AIモデル（YOLO）の本体
 ultralytics
-
-# 画像処理ライブラリ
 opencv-python
 numpy
-
-# TensorRT（.engine形式での超高速推論に必須）
 tensorrt
