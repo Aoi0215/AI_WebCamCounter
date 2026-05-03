@@ -1,0 +1,54 @@
+以下の3ステップで環境を構築してください。
+
+### ステップ1：PyTorch（CUDA対応版）のインストール
+まずはコマンドプロンプト（またはPowerShell）を開き、NVIDIAのGPUを認識できるバージョンのPyTorchをインストールします。これが最も重要です。
+
+```cmd
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+*(※このコマンドは、RTX 4000シリーズに最適な CUDA 12.1 対応版をインストールします)*
+
+### ステップ2：`requirements.txt` の作成と実行
+デスクトップ等に `requirements.txt` という名前のファイルを作成し、以下の内容をコピペして保存します。
+
+**【requirements.txt】**
+```text
+# AIモデル（YOLO）の本体
+ultralytics
+
+# 画像処理ライブラリ
+opencv-python
+numpy
+
+# TensorRT（.engine形式での超高速推論に必須）
+tensorrt
+```
+
+保存できたら、ファイルがあるフォルダで以下のコマンドを実行し、残りのライブラリを一括インストールします。
+
+```cmd
+pip install -r requirements.txt
+```
+
+### ステップ3：GPUが認識されているかの最終確認
+インストールが終わったら、本当に「RTX 4070 SUPER」がAIから見えているかテストします。コマンドプロンプトで `python` と打ち込み、以下のコードを1行ずつコピペして実行してみてください。
+
+```python
+import torch
+print(torch.cuda.is_available())
+# ここで True と出れば大成功です！
+
+print(torch.cuda.get_device_name(0))
+# ここで 'NVIDIA GeForce RTX 4070 SUPER' と出れば完璧です！
+
+exit()
+```
+
+---
+
+### 💡 補足：TensorRTへのエクスポートについて
+ライブラリの準備ができたら、以前お伝えした通り、Windows＋NVIDIA環境で最速を叩き出す「TensorRTフォーマット」への書き出しを行ってください。
+
+```cmd
+yolo export model=yolov8n.pt format=engine half=True device=0
+```
