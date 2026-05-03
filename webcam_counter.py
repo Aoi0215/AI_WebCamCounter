@@ -99,11 +99,10 @@ class WebcamPersonCounter:
         else:
             self.model = YOLO(self.model_path)
             
-        print("AIモデルの準備体操（ウォームアップ）を開始します...")
-        # 真っ黒なダミー画像（高さ480, 幅640, 3色）を作成
-        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        print("AIモデルのウォームアップを開始します...")
+        dummy_img = np.zeros((640, 640, 3), dtype=np.uint8)
         # ダミー画像を1回だけ推論させる（結果は捨てる）
-        self.model.track(dummy_img, persist=False, verbose=False, device=self.device)
+        self.model.track(dummy_img, persist=False, verbose=False, device=self.device, imgsz=(640, 640))
         print("ウォームアップ完了！")
 
         # 軌跡保存用のdequeだけ残す
@@ -188,7 +187,7 @@ class WebcamPersonCounter:
             return frame
 
         # 【改善1】 half=True を追加してMac(MPS)での計算をさらに高速化
-        results = self.model.track(roi_frame, persist=True, verbose=False, device=self.device, classes=[0], half=True)[0]
+        results = self.model.track(roi_frame, persist=True, verbose=False, device=self.device, classes=[0], half=True, imgsz=(640, 640))[0]
 
         ai_time = (time.perf_counter() - start_time) * 1000
 

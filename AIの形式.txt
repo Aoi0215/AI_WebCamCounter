@@ -1,7 +1,7 @@
 
 Mac最適化↓
 yolo export model=yolo26x.pt format=coreml half=True
-yolo export model=yolo26n.pt format=coreml imgsz=480,256
+yolo export model=yolo26x.pt format=coreml half=True imgsz=480,640
 
 
 その通りです！素晴らしい推察力ですね。
