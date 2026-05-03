@@ -1,0 +1,75 @@
+指定された型番「JGA7G7SB5ABCW101DECKK」は、マウスコンピューターのゲーミングブランド「NEXTGEAR」の限定モデル（JG-A7G7S）ですね。
+
+このパソコンは、以前テストされていたMacBook Airとは**「次元が違うパワーと耐久力」**を持っています。AIの物体検出（YOLO）を1日中回し続ける「中央処理コンピュータ」として、これ以上ないほど完璧なスペックです。
+
+まずはこのPCのスペックと、それがシステムにどう有利に働くかを整理します。
+
+### 1. 中央処理コンピュータのスペック
+*   **GPU（グラフィック）**: NVIDIA GeForce RTX 4070 SUPER (VRAM 12GB)
+*   **CPU**: AMD Ryzen 7 5700X (8コア / 16スレッド)
+*   **メモリ (RAM)**: 32GB DDR4-3200
+*   **ストレージ**: 1TB NVMe Gen4 SSD
+*   **冷却システム**: 240mm 水冷CPUクーラー
+
+---
+
+### 2. ハードウェア特性とAI処理への圧倒的メリット
+
+MacBook Airでの検証時に苦労したポイントが、このPCではすべて解決します。
+
+#### ① 「熱ダレ（サーマルスロットリング）」からの完全開放
+以前、MacBook Airで「数時間で処理速度が落ちる」という熱ダレ問題が発生しました。しかし、このデスクトップPCは**強力な水冷クーラーと大型の冷却ファン**を搭載しています。
+文化祭で20時間連続でAIをフル稼働させても、一切スピードが落ちず、一定のFPSで安定してカウントし続けます。
+
+#### ② AI処理の王道「NVIDIA GPU」の搭載
+Appleの「Neural Engine / CoreML」は融通が利かずエラーに悩まされましたが、このPCにはAI業界の絶対的スタンダードである**NVIDIA製GPU（RTX 4070 SUPER）**が搭載されています。
+設定で悩むことがほぼ無くなり、最新のAIアルゴリズムを最も効率よく、最速で動かすことができます。
+
+#### ③ 12GBのVRAMと32GBのメインメモリ
+「OBSで3画面を横に繋ぐ」という裏技を提案しましたが、これを行うと映像のサイズが大きくなります。しかし、このPCの「VRAM 12GB」と「メモリ 32GB」があれば、OBS、Chrome（VDO.Ninja）、そしてPythonのAI処理を同時に立ち上げても、メモリ不足でカクつくことは絶対にありません。
+
+---
+
+### 3. このPCに合わせた「最強の最適化」設定
+
+このモンスターマシンの力を100%引き出すために、YOLOの書き出し方とスクリプトの設定を**NVIDIA（Windows）専用**に変更する必要があります。
+
+#### 最適化1：モデルを「TensorRT」フォーマットで書き出す
+Macでは `format=coreml` を使いましたが、Windows＋NVIDIA GPUでは**「TensorRT（`.engine`）」**という究極の高速フォーマットを使います。
+
+コマンドプロンプトで以下を実行して、モデルを変換してください（変換には数分かかります）。
+```bash
+# CoreMLの代わりに engine (TensorRT) を指定。device=0 でGPUを使って変換。
+yolo export model=yolov8n.pt format=engine half=True device=0 imgsz=480,1920
+```
+※ `imgsz=480,1920` は、OBSで3画面を繋げた「横幅1920、高さ480」を想定しています。
+
+#### 最適化2：スクリプトのデバイス指定を「CUDA」に変更
+スクリプト（`webcam_counter_7.py`）内の `__init__` にあるデバイス設定を、Macの `mps` から Windowsの `cuda` に変更します。
+
+**【修正前】**
+```python
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        elif torch.backends.mps.is_available():
+            self.device = torch.device('mps') # MacのGPU(Metal)を指定
+```
+
+**【修正後（NVIDIA専用に固定）】**
+```python
+        # NVIDIA GPUを強制的に使用する
+        self.device = torch.device('cuda:0')
+        print(f"Using NVIDIA GPU: {torch.cuda.get_device_name(0)}")
+```
+
+#### 最適化3：モデルの読み込み
+エクスポートしたTensorRTモデル（拡張子が `.engine`）を読み込むように変更します。
+```python
+        # TensorRTモデルを読み込む
+        self.model = YOLO('yolov8n.engine', task='detect') 
+```
+
+### まとめ
+このNEXTGEARのデスクトップPCを使えば、精度を上げるために「nモデル（軽量）」から「xモデル（超重量級）」に切り替えても、余裕でリアルタイム処理（30fps）を叩き出せるはずです。
+
+もしWindows側で「CUDAが認識されない（PyTorchがGPUを使ってくれない）」などの環境構築エラーが出た場合は、NVIDIAドライバやCUDA Toolkitの設定手順をお伝えしますので、いつでも言ってくださいね！
