@@ -13,6 +13,50 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
+class FrameReader(threading.Thread):
+    def __init__(self, source, width=None, height=None, fps=None):
+        super().__init__(daemon=True) # メインプログラム終了時に一緒に終了する設定
+        self.cap = cv2.VideoCapture(source)
+        
+        # 【④ バッファサイズの最小化】（遅延をなくす魔法の1行）
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        if width and height:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        if fps:
+            self.cap.set(cv2.CAP_PROP_FPS, fps)
+            
+        self.frame = None
+        self.ret = False
+        self.running = True
+        self.lock = threading.Lock() # データの衝突を防ぐための鍵
+        
+        # 最初の1フレームを読み込んでおく
+        if self.cap.isOpened():
+            self.ret, self.frame = self.cap.read()
+
+    def run(self):
+        """別スレッドでひたすら最新フレームを読み込み続ける"""
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                # lockを使って、AIが画像を読み取っている最中に上書きしないよう保護
+                with self.lock:
+                    self.ret = ret
+                    self.frame = frame
+
+    def read(self):
+        """AI側（メインスレッド）から最新フレームを取得するメソッド"""
+        with self.lock:
+            # frame.copy() を返すことで、AI処理中に画像が書き換わるのを防ぐ
+            return self.ret, (self.frame.copy() if self.frame is not None else None)
+
+    def stop(self):
+        """終了時の片付け"""
+        self.running = False
+        self.cap.release()
+
 class WebcamPersonCounter:
     def __init__(self, source=0, model_path=None, line_position=0.5, line_direction='horizontal', 
                  conf_threshold=0.25, show_tracks=True, resolution=None, fps=None,
@@ -34,6 +78,10 @@ class WebcamPersonCounter:
         self.count_down = 0
         self.counted_ids = set()
         self.crossed_ids = {}
+
+        # 実測FPS計算用の変数
+        self.prev_time = time.time()
+        self.fps_display = 0.0
         
         # GPUが利用可能かチェック
         if torch.cuda.is_available():
@@ -51,8 +99,15 @@ class WebcamPersonCounter:
         else:
             self.model = YOLO(self.model_path)
 
+        print("AIモデルの準備体操（ウォームアップ）を開始します...")
+        # 真っ黒なダミー画像（高さ480, 幅640, 3色）を作成
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        # ダミー画像を1回だけ推論させる（結果は捨てる）
+        self.model.track(dummy_img, persist=False, verbose=False, device=self.device)
+        print("ウォームアップ完了！")
 
-        # 軌跡保存用のdequeだけ残す（公式トラッカーは軌跡を保持しないため）
+
+        # 軌跡保存用のdequeだけ残す
         self.tracks = defaultdict(lambda: deque(maxlen=30))
         
         
@@ -60,26 +115,22 @@ class WebcamPersonCounter:
         self.initialize_camera()
     
     def initialize_camera(self):
-        """カメラを初期化する"""
-        self.cap = cv2.VideoCapture(self.source)
-        if not self.cap.isOpened():
+        """カメラを初期化し、別スレッドで起動する"""
+        # 直列の VideoCapture の代わりに、さっき作った FrameReader を使う
+        self.stream = FrameReader(self.source, self.resolution[0] if self.resolution else None, 
+                                  self.resolution[1] if self.resolution else None, self.fps)
+        if not self.stream.cap.isOpened():
             print(f"Error: カメラソース {self.source} を開けませんでした。")
             sys.exit(1)
         
-        # 解像度の設定
-        if self.resolution:
-            width, height = self.resolution
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        # スレッド（アルバイト）の稼働スタート！
+        self.stream.start()
         
-        # フレームレートの設定
-        if self.fps:
-            self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-        
+        # ※解像度とFPSの設定はFrameReaderの中で終わっているので、ここは「取得」だけでOK！
         # 画面サイズの取得（設定後の実際の値）
-        self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.width = int(self.stream.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height = int(self.stream.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.actual_fps = self.stream.cap.get(cv2.CAP_PROP_FPS)
         
         print(f"カメラ解像度: {self.width}x{self.height}")
         print(f"フレームレート: {self.actual_fps}")
@@ -120,103 +171,112 @@ class WebcamPersonCounter:
     def process_frame(self, frame):
         """フレームを処理して人物を検出・追跡し、カウントを更新"""
 
-        # 1. ROIのピクセル座標を取得
+        # --- 1. 前処理（切り抜きなど） ---
+        start_time = time.perf_counter()
+
         x1_roi, y1_roi, x2_roi, y2_roi = self.roi_pixels
-        
-        # 2. フレームからROI領域を切り抜く
         roi_frame = frame[y1_roi:y2_roi, x1_roi:x2_roi]
 
-        # 3. 切り抜いた画像 (roi_frame) をYOLOで検出
+        pre_process_time = (time.perf_counter() - start_time) * 1000
+
+        # --- 2. AI推論＆トラッキング ---
+        start_time = time.perf_counter()
+
         if roi_frame.size == 0:
             print("警告: ROI領域が空です。ROIの指定を確認してください。")
             cv2.rectangle(frame, (x1_roi, y1_roi), (x2_roi, y2_roi), (255, 0, 0), 2)
             cv2.putText(frame, "ROI (Empty)", (x1_roi + 5, y1_roi + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
             return frame
 
-        # 3. 公式トラッカー(ByteTrack)を使い、切り抜いた画像を処理
-        results = self.model.track(roi_frame, persist=True, verbose=False, device=self.device)[0]
+        # 【改善1】 half=True を追加してMac(MPS)での計算をさらに高速化
+        results = self.model.track(roi_frame, persist=True, verbose=False, device=self.device, classes=[0], half=True)[0]
 
+        ai_time = (time.perf_counter() - start_time) * 1000
+
+        # --- 3. 後処理＆描画 ---
+        start_time = time.perf_counter()
         
-        # 4. 検出結果の座標を、元のフレーム座標に変換
-        detections = [] # [ (bbox), track_id ] のリスト
+        # 【改善2】ゴミ掃除用に「今画面にいるID」を記録するセットを用意
+        current_active_ids = set()
             
-        # 検出と追跡が両方成功したかチェック
         if results.boxes.id is not None:
-            
-            # 必要なデータを個別にNumpy配列として取得
-            boxes_xyxy = results.boxes.xyxy.cpu().numpy() # 座標 [x1, y1, x2, y2]
-            track_ids = results.boxes.id.int().cpu().tolist() # トラックID
-            confs = results.boxes.conf.cpu().numpy() # 信頼度
-            clss = results.boxes.cls.cpu().numpy() # クラスID
+            boxes_xyxy = results.boxes.xyxy.cpu().numpy()
+            track_ids = results.boxes.id.int().cpu().tolist()
+            confs = results.boxes.conf.cpu().numpy()
+            # ※クラスID(cls)の取得は人間のみに絞ったため不要になり削除しました
 
-            # 検出された数だけループ
+            # 【改善3】二重ループを解消。1つのループで判定から描画まで一気に処理
             for i in range(len(track_ids)):
+                conf = confs[i]
+                
+                # 信頼度が低い場合は、以後の計算を一切せずに次の人へ（処理の節約）
+                if conf <= self.conf_threshold:
+                    continue
+                    
                 bbox = boxes_xyxy[i]
                 track_id = track_ids[i]
-                conf = confs[i]
-                cls = clss[i]
                 
-                # 座標を分解
-                x1, y1, x2, y2 = bbox
+                # ゴミ掃除名簿に「この人は今いるよ」と記録
+                current_active_ids.add(track_id)
                 
-                # オフセット (roi_pixelsの左上座標) を加算して、元の frame 基準の座標に戻す
-                x1_orig = x1 + x1_roi
-                y1_orig = y1 + y1_roi
-                x2_orig = x2 + x1_roi
-                y2_orig = y2 + y1_roi
+                # 座標を元のフレーム基準に戻す（描画時の高速化のため先に int にしておく）
+                x1_orig = int(bbox[0] + x1_roi)
+                y1_orig = int(bbox[1] + y1_roi)
+                x2_orig = int(bbox[2] + x1_roi)
+                y2_orig = int(bbox[3] + y1_roi)
 
-                if int(cls) == 0 and conf > self.conf_threshold:  # クラス0=person
-                    # (このスクリプトにはオレンジ色のフィルターはありません)
-                    detections.append(([x1_orig, y1_orig, x2_orig, y2_orig], track_id))
-
-        # 各トラックについて処理
-        for (bbox, track_id) in detections:
-            
-            center_x = int((bbox[0] + bbox[2]) / 2)
-            center_y = int((bbox[1] + bbox[3]) / 2)
-            
-            # 軌跡を更新 (self.tracks を使う)
-            self.tracks[track_id].append((center_x, center_y))
-            track_history = self.tracks[track_id]
-            
-            # ラインの交差をチェック
-            if len(track_history) >= 2:
-                prev_center = track_history[-2]
-                curr_center = track_history[-1]
+                # 中心点の計算
+                center_x = int((x1_orig + x2_orig) / 2)
+                center_y = int((y1_orig + y2_orig) / 2)
                 
-                if self.line_direction == 'horizontal':
-                    if (prev_center[1] < self.line_y and curr_center[1] >= self.line_y) or \
-                       (prev_center[1] >= self.line_y and curr_center[1] < self.line_y):
-                        if track_id not in self.crossed_ids:
-                            if prev_center[1] < self.line_y and curr_center[1] >= self.line_y:
-                                self.count_down += 1
-                                self.crossed_ids[track_id] = 'down'
-                            else:
-                                self.count_up += 1
-                                self.crossed_ids[track_id] = 'up'
-                else:  # vertical
-                    if (prev_center[0] < self.line_x and curr_center[0] >= self.line_x) or \
-                       (prev_center[0] >= self.line_x and curr_center[0] < self.line_x):
-                        if track_id not in self.crossed_ids:
-                            if prev_center[0] < self.line_x and curr_center[0] >= self.line_x:
-                                self.count_up += 1
-                                self.crossed_ids[track_id] = 'right'
-                            else:
-                                self.count_down += 1
-                                self.crossed_ids[track_id] = 'left'
-            
-            # バウンディングボックスを描画
-            color = (0, 255, 0)  # 緑色
-            cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), color, 2)
-            
-            # IDを表示
-            cv2.putText(frame, f"ID: {track_id}", (int(bbox[0]), int(bbox[1])-10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
-            # 軌跡を描画
-            if self.show_tracks and len(track_history) > 1:
-                for i in range(1, len(track_history)):
-                    cv2.line(frame, track_history[i-1], track_history[i], color, 2)
+                # 軌跡を更新
+                self.tracks[track_id].append((center_x, center_y))
+                track_history = self.tracks[track_id]
+                
+                # ラインの交差をチェック
+                if len(track_history) >= 2:
+                    prev_center = track_history[-2]
+                    curr_center = track_history[-1]
+                    
+                    if self.line_direction == 'horizontal':
+                        if (prev_center[1] < self.line_y and curr_center[1] >= self.line_y) or \
+                           (prev_center[1] >= self.line_y and curr_center[1] < self.line_y):
+                            if track_id not in self.crossed_ids:
+                                if prev_center[1] < self.line_y and curr_center[1] >= self.line_y:
+                                    self.count_down += 1
+                                    self.crossed_ids[track_id] = 'down'
+                                else:
+                                    self.count_up += 1
+                                    self.crossed_ids[track_id] = 'up'
+                    else:  # vertical
+                        if (prev_center[0] < self.line_x and curr_center[0] >= self.line_x) or \
+                           (prev_center[0] >= self.line_x and curr_center[0] < self.line_x):
+                            if track_id not in self.crossed_ids:
+                                if prev_center[0] < self.line_x and curr_center[0] >= self.line_x:
+                                    self.count_up += 1
+                                    self.crossed_ids[track_id] = 'right'
+                                else:
+                                    self.count_down += 1
+                                    self.crossed_ids[track_id] = 'left'
+                
+                # バウンディングボックスとIDを描画
+                color = (0, 255, 0)
+                cv2.rectangle(frame, (x1_orig, y1_orig), (x2_orig, y2_orig), color, 2)
+                cv2.putText(frame, f"ID: {track_id}", (x1_orig, y1_orig - 10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                # 軌跡を描画
+                if self.show_tracks and len(track_history) > 1:
+                    # 過去の座標リスト(track_history)を、OpenCVが読めるNumPy配列(int32)に変換
+                    pts = np.array(track_history, dtype=np.int32).reshape((-1, 1, 2))
+                    # polylinesで一筆書き（isClosed=False で始点と終点を繋がないようにする）
+                    cv2.polylines(frame, [pts], isClosed=False, color=color, thickness=2)
+
+        # 【改善4】メモリのゴミ掃除（不要な軌跡データの削除）
+        # self.tracks に記録されている全IDのうち、今画面にいない人の履歴フォルダを捨てる
+        for track_id in list(self.tracks.keys()):
+            if track_id not in current_active_ids:
+                del self.tracks[track_id]
         
         # カウントラインを描画
         cv2.line(frame, self.line_start, self.line_end, (0, 0, 255), 2)
@@ -236,23 +296,41 @@ class WebcamPersonCounter:
         cv2.putText(frame, f"Total: {self.count_up + self.count_down}", (10, 110), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
-        # カメラ情報を表示
+        # カメラ情報とROI情報を表示
         cv2.putText(frame, f"Camera: {self.source} ({self.width}x{self.height} @ {self.actual_fps:.1f}fps)", 
                     (10, self.height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        # ROIの範囲を視覚化
-        cv2.rectangle(frame, (x1_roi, y1_roi), (x2_roi, y2_roi), (255, 0, 0), 2) # 青色の枠
+        cv2.rectangle(frame, (x1_roi, y1_roi), (x2_roi, y2_roi), (255, 0, 0), 2)
         cv2.putText(frame, "ROI", (x1_roi + 5, y1_roi + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+        draw_time = (time.perf_counter() - start_time) * 1000
+
+        # ベンチマーク結果を表示
+        cv2.putText(frame, f"AI Process: {ai_time:.1f} ms", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(frame, f"Draw/Other: {pre_process_time + draw_time:.1f} ms", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # 実測FPSの計算（移動平均を使って数字のブレを抑える）
+        current_time = time.time()
+        elapsed_time = current_time - self.prev_time
+        self.prev_time = current_time
+        
+        # 0除算エラーを防ぐ
+        if elapsed_time > 0:
+            current_fps = 1.0 / elapsed_time
+            # 現在のFPSを10%、過去のFPSを90%の割合で混ぜて滑らかにする
+            self.fps_display = (0.9 * self.fps_display) + (0.1 * current_fps)
+            
+        cv2.putText(frame, f"Actual FPS: {self.fps_display:.1f}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
         return frame
-    
+        
     def run(self):
         """メインループ"""
         while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Error: フレームを読み込めませんでした。")
-                break
+            # テーブルに置かれた最新の画像をサッと取る（待ち時間ゼロ！）
+            ret, frame = self.stream.read()
+            
+            if not ret or frame is None:
+                continue # 画像がまだ来ていなければ一瞬待つ
             
             # フレームを処理
             processed_frame = self.process_frame(frame)
@@ -282,7 +360,7 @@ class WebcamPersonCounter:
                 print(f"ラインの方向を {self.line_direction} に変更しました")
         
         # リソースを解放
-        self.cap.release()
+        self.stream.stop() # スレッドを安全に停止
         cv2.destroyAllWindows()
 
 
