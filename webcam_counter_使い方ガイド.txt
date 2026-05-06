@@ -221,3 +221,6 @@ python webcam_counter.py --fps 30 --model yolo26l.pt --width 640 --height 480
 python webcam_counter.py --fps 30 --model yolo26x.mlpackage --width 640 --height 480 --roi-x1 0.3 --roi-x2 0.7
 
 python webcam_counter.py --fps 30 --model yolo26x.mlpackage --width 640 --height 480
+python webcam_counter.py --fps 30 --model yolo26x.mlpackage --width 640 --height 480
+
+python webcam_counter.py --model yolo26x.engine --width 640 --height 480 --source 0

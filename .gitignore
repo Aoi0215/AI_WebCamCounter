@@ -5,6 +5,8 @@ __pycache__/
 # AIモデルファイル（サイズが大きくGitHubには不向き）
 *.pt
 *.onnx
+*.mlpackage
+*.engine
 
 # 動画・画像ファイル（テスト用のデータ）
 *.mp4
@@ -16,5 +18,3 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# CoreML Models
-*.mlpackage
